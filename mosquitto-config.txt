@@ -1,0 +1,3 @@
+
+# 설정 파일을 마운트하여 다시 실행 (현재 경로 기준)
+docker run -d --name mosquitto -p 1883:1883 -p 9001:9001 -v "%cd%\mosquitto.conf:/mosquitto/config/mosquitto.conf" eclipse-mosquitto
