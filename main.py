@@ -41,25 +41,27 @@ mqtt_client.loop_start()
 async def data_generation_loop():
     while True:
         if state.is_running:
-            # 센서 타입에 따른 가짜 데이터 생성
             if state.sensor_type == "piezo":
-                payload = {
-                    "sensor": "piezo",
-                    "timestamp": time.time(),
-                    "voltage": round(random.uniform(0.0, 5.0), 2)
-                }
+                # 예: 0 ~ 5000 사이의 값을 생성하여 16비트 Hex로 변환 (4자리)
+                raw_val = random.randint(0, 5000)
+                hex_payload = f"{raw_val & 0xFFFF:04X}"
+                
             else: # adxl
-                payload = {
-                    "sensor": "adxl",
-                    "timestamp": time.time(),
-                    "x": round(random.uniform(-2.0, 2.0), 2),
-                    "y": round(random.uniform(-2.0, 2.0), 2),
-                    "z": round(random.uniform(-2.0, 2.0), 2)
-                }
+                # 예: -2000 ~ 2000 사이의 값을 생성하여 각각 16비트 Hex로 변환 (총 12자리)
+                x_val = random.randint(-2000, 2000)
+                y_val = random.randint(-2000, 2000)
+                z_val = random.randint(-2000, 2000)
+                hex_payload = f"{x_val & 0xFFFF:04X}{y_val & 0xFFFF:04X}{z_val & 0xFFFF:04X}"
+
+            # JSON에는 센서 타입과 Raw Hex String만 담아서 전송
+            payload = {
+                "sensor": state.sensor_type,
+                "timestamp": time.time(),
+                "hex_data": hex_payload
+            }
             
-            # JSON 직렬화 후 MQTT 발행
             mqtt_client.publish(MQTT_TOPIC, json.dumps(payload))
-            print(f"Published: {payload}")
+            print(f"📤 Published Raw: {payload}")
             
         await asyncio.sleep(state.interval)
 
