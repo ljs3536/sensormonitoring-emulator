@@ -274,7 +274,7 @@
           const selectedId = document.getElementById("sensor_id_select").value;
           if (selectedId) {
             {
-              fetch(`/api/set_sensor/${{ currentType }}/${{ selectedId }}`, {
+              fetch(`/api/set_sensor/${currentType}/${selectedId}`, {
                 method: "POST",
               });
             }

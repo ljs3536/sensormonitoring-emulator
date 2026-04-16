@@ -41,38 +41,59 @@ mqtt_client.loop_start()
 
 # --- 데이터 생성 루프 ---
 async def data_generation_loop():
+    print("⚙️ 데이터 생성 루프 백그라운드 구동 시작!") # 루프가 켜졌는지 확인
     while True:
-        if state.mode != "stopped":
-            hex_samples = []
-            if state.mode == "basic_auto":
-                for i in range(state.sample_count):
-                    t = (i * 0.01)
-                    if state.sensor_type == "piezo":
-                        val = int(2048 + 800 * math.sin(t * 10))
-                        hex_samples.append(f"{val & 0xFFFF:04X}")
-                    else:
-                        x = int(2048 + 400 * math.sin(t * 5))
-                        y = int(2048 + 300 * math.sin(t * 7))
-                        z = int(2048 + 500 * math.sin(t * 3))
-                        hex_samples.append(f"{x & 0xFFFF:04X}{y & 0xFFFF:04X}{z & 0xFFFF:04X}")
-            elif state.mode == "custom_auto":
-                for i in range(state.sample_count):
-                    idx = i % len(state.custom_data["x"]) if state.custom_data["x"] else 0
-                    if state.sensor_type == "piezo":
-                        val = int(state.custom_data["x"][idx]) + random.randint(-10, 10)
-                        hex_samples.append(f"{val & 0xFFFF:04X}")
-                    else:
-                        x = int(state.custom_data["x"][idx]) + random.randint(-5, 5)
-                        y = int(state.custom_data["y"][idx]) + random.randint(-5, 5)
-                        z = int(state.custom_data["z"][idx]) + random.randint(-5, 5)
-                        hex_samples.append(f"{x & 0xFFFF:04X}{y & 0xFFFF:04X}{z & 0xFFFF:04X}")
+        try:
+            if state.mode != "stopped":
+                hex_samples = []
+                
+                # --- (1) 기본 모드 데이터 생성 ---
+                if state.mode == "basic_auto":
+                    for i in range(state.sample_count):
+                        t = (i * 0.01)
+                        if state.sensor_type == "piezo":
+                            val = int(2048 + 800 * math.sin(t * 10))
+                            hex_samples.append(f"{val & 0xFFFF:04X}")
+                        else:
+                            x = int(2048 + 400 * math.sin(t * 5))
+                            y = int(2048 + 300 * math.sin(t * 7))
+                            z = int(2048 + 500 * math.sin(t * 3))
+                            hex_samples.append(f"{x & 0xFFFF:04X}{y & 0xFFFF:04X}{z & 0xFFFF:04X}")
+                            
+                # --- (2) 커스텀 모드 데이터 생성 ---
+                elif state.mode == "custom_auto":
+                    for i in range(state.sample_count):
+                        idx = i % len(state.custom_data["x"]) if state.custom_data["x"] else 0
+                        if state.sensor_type == "piezo":
+                            val = int(state.custom_data["x"][idx]) + random.randint(-10, 10)
+                            hex_samples.append(f"{val & 0xFFFF:04X}")
+                        else:
+                            x = int(state.custom_data["x"][idx]) + random.randint(-5, 5)
+                            y = int(state.custom_data["y"][idx]) + random.randint(-5, 5)
+                            z = int(state.custom_data["z"][idx]) + random.randint(-5, 5)
+                            hex_samples.append(f"{x & 0xFFFF:04X}{y & 0xFFFF:04X}{z & 0xFFFF:04X}")
+                
+                # --- (3) 페이로드 조립 및 전송 ---
+                payload = {
+                    "seq": state.seq, 
+                    "sensor_id": state.sensor_id, # DB에서 연동한 센서 ID
+                    "sensor": state.sensor_type, 
+                    "label": state.current_label,
+                    "timestamp": time.time(), 
+                    "sample_count": state.sample_count, 
+                    "hex_data": "".join(hex_samples)
+                }
+                
+                # 🌟 [디버깅] 여기서 발송 여부를 터미널에 찍습니다!
+                print(f"📤 MQTT 발송! [ID: {state.sensor_id} | Type: {state.sensor_type} | Mode: {state.mode}]")
+                
+                mqtt_client.publish(MQTT_TOPIC, json.dumps(payload))
+                state.seq = (state.seq + 1) % 256
+                
+        except Exception as e:
+            # 🌟 [디버깅] 루프 돌다가 에러 나면 조용히 뻗지 말고 빨간 글씨로 뱉어라!
+            print(f"🚨 [에뮬레이터 치명적 에러]: {e}")
             
-            payload = {
-                "seq": state.seq, "sensor_id": state.sensor_id, "sensor": state.sensor_type, "label": state.current_label,
-                "timestamp": time.time(), "sample_count": state.sample_count, "hex_data": "".join(hex_samples)
-            }
-            mqtt_client.publish(MQTT_TOPIC, json.dumps(payload))
-            state.seq = (state.seq + 1) % 256
         await asyncio.sleep(state.interval)
 
 @app.on_event("startup")
