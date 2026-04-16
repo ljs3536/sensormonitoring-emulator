@@ -1,0 +1,348 @@
+<html>
+  <head>
+    <title>Sensor Emulator Control</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-dragdata@2.2.3/dist/chartjs-plugin-dragdata.min.js"></script>
+  </head>
+  <body
+    style="font-family: sans-serif; padding: 20px; background-color: #f8fafc"
+  >
+    <div
+      style="
+        max-width: 1000px;
+        margin: auto;
+        background: white;
+        padding: 30px;
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+      "
+    >
+      <h2 style="text-align: center; color: #1e293b">
+        📊 Precision Pattern Editor (32-Point)
+      </h2>
+
+      <div style="display: flex; gap: 20px; margin-top: 20px">
+        <div
+          style="
+            flex: 1;
+            background: #f1f5f9;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+          "
+        >
+          <h4 style="margin-top: 0">1. Sensor Type</h4>
+          <button
+            onclick="changeSensor('piezo')"
+            id="btn-piezo"
+            style="
+              width: 100%;
+              padding: 10px;
+              margin-bottom: 8px;
+              background: #3b82f6;
+              color: white;
+              border: none;
+              border-radius: 8px;
+              cursor: pointer;
+              font-weight: bold;
+            "
+          >
+            Piezo
+          </button>
+          <button
+            onclick="changeSensor('adxl')"
+            id="btn-adxl"
+            style="
+              width: 100%;
+              padding: 10px;
+              background: #94a3b8;
+              color: white;
+              border: none;
+              border-radius: 8px;
+              cursor: pointer;
+              font-weight: bold;
+            "
+          >
+            ADXL
+          </button>
+
+          <h4 style="margin-top: 20px">2. Target Sensor (DB)</h4>
+          <select
+            id="sensor_id_select"
+            onchange="updateTargetSensor()"
+            style="
+              width: 100%;
+              padding: 10px;
+              border-radius: 8px;
+              border: 1px solid #ccc;
+              margin-bottom: 8px;
+              background: white;
+            "
+          >
+            <option value="">Loading...</option>
+          </select>
+
+          <h4 style="margin-top: 20px">3. Action</h4>
+          <button
+            onclick="fetch('/api/start_basic', { method: 'POST' })"
+            style="
+              width: 100%;
+              padding: 10px;
+              background: #10b981;
+              color: white;
+              border: none;
+              border-radius: 8px;
+              cursor: pointer;
+              margin-bottom: 8px;
+            "
+          >
+            Auto Start
+          </button>
+          <button
+            onclick="startCustomLoop()"
+            style="
+              width: 100%;
+              padding: 10px;
+              background: #6366f1;
+              color: white;
+              border: none;
+              border-radius: 8px;
+              cursor: pointer;
+              margin-bottom: 8px;
+            "
+          >
+            Send Custom
+          </button>
+          <button
+            onclick="fetch('/api/stop', { method: 'POST' })"
+            style="
+              width: 100%;
+              padding: 10px;
+              background: #ef4444;
+              color: white;
+              border: none;
+              border-radius: 8px;
+              cursor: pointer;
+            "
+          >
+            Stop
+          </button>
+        </div>
+
+        <div style="flex: 3">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 10px;
+            "
+          >
+            <h4 id="chart-title" style="margin: 0; color: #475569">
+              Piezo 패턴 (32 제어점)
+            </h4>
+            <select id="custom_label" style="padding: 6px; border-radius: 5px">
+              <option value="normal">Normal</option>
+              <option value="anomaly">Anomaly</option>
+            </select>
+          </div>
+          <canvas id="dragChart" height="140"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const ctx = document.getElementById("dragChart").getContext("2d");
+      let currentType = "piezo";
+      const CONTROL_COUNT = 32;
+      const TARGET_COUNT = 128;
+
+      // 🌟 Z축 중력(1g)이 반영된 초기 데이터 세팅
+      const defaultPiezo = Array.from({ length: CONTROL_COUNT }, (_, i) =>
+        Math.round(2048 + 1000 * Math.sin(i * 0.4)),
+      );
+      const defaultX = Array.from({ length: CONTROL_COUNT }, () =>
+        Math.round(2048 + (Math.random() * 20 - 10)),
+      );
+      const defaultY = Array.from({ length: CONTROL_COUNT }, () =>
+        Math.round(2048 + (Math.random() * 20 - 10)),
+      );
+      const defaultZ = Array.from({ length: CONTROL_COUNT }, () =>
+        Math.round(2800 + (Math.random() * 20 - 10)),
+      ); // Z축 오프셋
+
+      const datasetPiezo = [
+        {
+          label: "Piezo Signal",
+          data: [...defaultPiezo],
+          borderColor: "#3b82f6",
+          fill: true,
+          backgroundColor: "rgba(59, 130, 246, 0.1)",
+          tension: 0.1,
+        },
+      ];
+      const datasetADXL = [
+        {
+          label: "X",
+          data: [...defaultX],
+          borderColor: "#ef4444",
+          tension: 0.1,
+        },
+        {
+          label: "Y",
+          data: [...defaultY],
+          borderColor: "#22c55e",
+          tension: 0.1,
+        },
+        {
+          label: "Z",
+          data: [...defaultZ],
+          borderColor: "#3b82f6",
+          tension: 0.1,
+        },
+      ];
+
+      const myChart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: Array.from({ length: CONTROL_COUNT }, (_, i) => i),
+          datasets: datasetPiezo,
+        },
+        options: {
+          scales: { y: { min: 0, max: 4095 } },
+          plugins: { dragData: { round: 0 } },
+        },
+      });
+
+      // 🌟 DB에서 센서 목록을 가져오고 UI를 업데이트하는 핵심 로직
+      async function changeSensor(type) {
+        {
+          currentType = type;
+
+          // UI 버튼 색상 및 차트 업데이트
+          document.getElementById("btn-piezo").style.background =
+            type === "piezo" ? "#3b82f6" : "#94a3b8";
+          document.getElementById("btn-adxl").style.background =
+            type === "adxl" ? "#3b82f6" : "#94a3b8";
+          document.getElementById("chart-title").innerText =
+            type.toUpperCase() + " 패턴 (32개 제어점)";
+          myChart.data.datasets = type === "piezo" ? datasetPiezo : datasetADXL;
+          myChart.update();
+
+          // DB에서 해당 타입의 센서 목록 Fetch
+          try {
+            {
+              const res = await fetch(`/api/db_sensors/${type}`);
+              const sensors = await res.json();
+              const selectBox = document.getElementById("sensor_id_select");
+
+              selectBox.innerHTML = ""; // 기존 목록 초기화
+
+              if (sensors.length === 0) {
+                {
+                  selectBox.innerHTML =
+                    '<option value="">등록된 센서 없음</option>';
+                }
+              } else {
+                {
+                  sensors.forEach((s) => {
+                    {
+                      const opt = document.createElement("option");
+                      opt.value = s.id;
+                      opt.text = s.name + " (" + s.id + ")";
+                      selectBox.appendChild(opt);
+                    }
+                  });
+                }
+              }
+              // 목록을 불러온 후 첫 번째 항목으로 서버 상태 업데이트
+              updateTargetSensor();
+            }
+          } catch (e) {
+            {
+              console.error("센서 목록 로딩 실패:", e);
+              document.getElementById("sensor_id_select").innerHTML =
+                '<option value="">DB 연결 에러</option>';
+            }
+          }
+        }
+      }
+
+      // 🌟 셀렉트박스 변경 시 서버의 EmulatorState 동기화
+      function updateTargetSensor() {
+        {
+          const selectedId = document.getElementById("sensor_id_select").value;
+          if (selectedId) {
+            {
+              fetch(`/api/set_sensor/${{ currentType }}/${{ selectedId }}`, {
+                method: "POST",
+              });
+            }
+          }
+        }
+      }
+
+      // 페이지 로드 시 기본(Piezo) 센서 목록을 불러오도록 초기화
+      window.onload = () => {
+        {
+          changeSensor("piezo");
+        }
+      };
+
+      function interpolate(points, targetLength) {
+        {
+          const result = [];
+          const factor = (points.length - 1) / (targetLength - 1);
+          for (let i = 0; i < targetLength; i++) {
+            {
+              const p = i * factor;
+              const left = Math.floor(p);
+              const right = Math.ceil(p);
+              const weight = p - left;
+              if (left === right) {
+                {
+                  result.push(points[left]);
+                }
+              } else {
+                {
+                  const val =
+                    points[left] * (1 - weight) + points[right] * weight;
+                  result.push(Math.round(val));
+                }
+              }
+            }
+          }
+          return result;
+        }
+      }
+
+      async function startCustomLoop() {
+        {
+          const x_full = interpolate(
+            myChart.data.datasets[0].data,
+            TARGET_COUNT,
+          );
+          const y_full =
+            currentType === "adxl"
+              ? interpolate(myChart.data.datasets[1].data, TARGET_COUNT)
+              : [];
+          const z_full =
+            currentType === "adxl"
+              ? interpolate(myChart.data.datasets[2].data, TARGET_COUNT)
+              : [];
+
+          await fetch("/api/start_custom", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              label: document.getElementById("custom_label").value,
+              custom_x: x_full,
+              custom_y: y_full,
+              custom_z: z_full,
+            }),
+          });
+        }
+      }
+    </script>
+  </body>
+</html>

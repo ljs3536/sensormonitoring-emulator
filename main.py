@@ -3,22 +3,30 @@ import json
 import random
 import time
 import math
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse
 import paho.mqtt.client as mqtt
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
+from database_rdb import get_db
+from sensors import Sensor
+import asyncio
 
 app = FastAPI()
+
+templates = Jinja2Templates(directory="templates")
 
 # --- 상태 관리 ---
 class EmulatorState:
     def __init__(self):
         self.mode = "stopped" 
         self.sensor_type = "piezo"
+        self.sensor_id = ""
         self.interval = 1.0
         self.sample_count = 128
         self.seq = 0
         self.custom_data = {"x": [], "y": [], "z": []}
-        self.current_label = "normal" 
+        self.current_label = "normal"
 
 state = EmulatorState()
 
@@ -60,7 +68,7 @@ async def data_generation_loop():
                         hex_samples.append(f"{x & 0xFFFF:04X}{y & 0xFFFF:04X}{z & 0xFFFF:04X}")
             
             payload = {
-                "seq": state.seq, "sensor": state.sensor_type, "label": state.current_label,
+                "seq": state.seq, "sensor_id": state.sensor_id, "sensor": state.sensor_type, "label": state.current_label,
                 "timestamp": time.time(), "sample_count": state.sample_count, "hex_data": "".join(hex_samples)
             }
             mqtt_client.publish(MQTT_TOPIC, json.dumps(payload))
@@ -86,118 +94,27 @@ async def start_custom(request: Request):
     state.mode = "custom_auto"
     return {"status": "custom_auto_started"}
 
+@app.get("/api/db_sensors/{sensor_type}")
+async def get_sensors_from_db(sensor_type: str, db: Session = Depends(get_db)):
+    """MariaDB에서 특정 타입의 활성화된 센서 목록을 가져옵니다."""
+    sensors = db.query(Sensor).filter(
+        Sensor.type == sensor_type, 
+        Sensor.is_active == True
+    ).all()
+    # 에뮬레이터 UI에서 쓰기 좋게 가공해서 리턴
+    return [{"id": s.id, "name": s.name} for s in sensors]
+
+@app.post("/api/set_sensor/{sensor_type}/{sensor_id}")
+async def set_sensor(sensor_type: str, sensor_id: str):
+    """타입과 함께 선택된 센서 ID를 상태에 업데이트합니다."""
+    state.sensor_type = sensor_type
+    state.sensor_id = sensor_id
+    return {"status": "updated", "type": sensor_type, "id": sensor_id}
+
 # --- 제어 화면 ---
 @app.get("/", response_class=HTMLResponse)
-async def get_control_panel():
-    html_content = f"""
-    <html>
-        <head>
-            <title>Sensor Emulator Control</title>
-            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-            <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-dragdata@2.2.3/dist/chartjs-plugin-dragdata.min.js"></script>
-        </head>
-        <body style="font-family: sans-serif; padding: 20px; background-color:#f8fafc;">
-            <div style="max-width: 1000px; margin: auto; background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
-                <h2 style="text-align:center; color:#1e293b;">📊 Precision Pattern Editor (32-Point)</h2>
-                
-                <div style="display: flex; gap: 20px; margin-top:20px;">
-                    <div style="flex: 1; background: #f1f5f9; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0;">
-                        <h4 style="margin-top:0;">1. Sensor</h4>
-                        <button onclick="changeSensor('piezo')" id="btn-piezo" style="width:100%; padding:10px; margin-bottom:8px; background:#3b82f6; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:bold;">Piezo</button>
-                        <button onclick="changeSensor('adxl')" id="btn-adxl" style="width:100%; padding:10px; background:#94a3b8; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:bold;">ADXL</button>
-                        <h4 style="margin-top:20px;">2. Action</h4>
-                        <button onclick="fetch('/api/start_basic', {{method:'POST'}})" style="width:100%; padding:10px; background:#10b981; color:white; border:none; border-radius:8px; cursor:pointer; margin-bottom:8px;">Auto Start</button>
-                        <button onclick="startCustomLoop()" style="width:100%; padding:10px; background:#6366f1; color:white; border:none; border-radius:8px; cursor:pointer; margin-bottom:8px;">Send Custom</button>
-                        <button onclick="fetch('/api/stop', {{method:'POST'}})" style="width:100%; padding:10px; background:#ef4444; color:white; border:none; border-radius:8px; cursor:pointer;">Stop</button>
-                    </div>
-
-                    <div style="flex: 3;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                            <h4 id="chart-title" style="margin:0; color:#475569;">Piezo 패턴 (32 제어점)</h4>
-                            <select id="custom_label" style="padding:6px; border-radius:5px;">
-                                <option value="normal">Normal</option>
-                                <option value="anomaly">Anomaly</option>
-                            </select>
-                        </div>
-                        <canvas id="dragChart" height="140"></canvas>
-                    </div>
-                </div>
-            </div>
-
-            <script>
-                const ctx = document.getElementById('dragChart').getContext('2d');
-                let currentType = 'piezo';
-                const CONTROL_COUNT = 32; 
-                const TARGET_COUNT = 128;
-
-                function interpolate(points, targetLength) {{
-                    const result = [];
-                    const factor = (points.length - 1) / (targetLength - 1);
-                    for (let i = 0; i < targetLength; i++) {{
-                        const p = i * factor;
-                        const left = Math.floor(p);
-                        const right = Math.ceil(p);
-                        const weight = p - left;
-                        if (left === right) {{
-                            result.push(points[left]);
-                        }} else {{
-                            const val = points[left] * (1 - weight) + points[right] * weight;
-                            result.push(Math.round(val));
-                        }}
-                    }}
-                    return result;
-                }}
-
-                // 🔥 자바스크립트에서는 Math.sin (대문자 M)을 써야 합니다!
-                const defaultX = Array.from({{length: CONTROL_COUNT}}, (_, i) => Math.round(2048 + 1000 * Math.sin(i * 0.4)));
-                const defaultY = Array.from({{length: CONTROL_COUNT}}, (_, i) => Math.round(2048 + 800 * Math.cos(i * 0.4)));
-                const defaultZ = Array.from({{length: CONTROL_COUNT}}, (_, i) => Math.round(1500 + 600 * Math.sin(i * 0.3 + 1)));
-
-                const datasetPiezo = [
-                    {{ label: 'Piezo Signal', data: [...defaultX], borderColor: '#3b82f6', fill: true, backgroundColor: 'rgba(59, 130, 246, 0.1)', tension: 0.1 }}
-                ];
-                
-                const datasetADXL = [
-                    {{ label: 'X', data: [...defaultX], borderColor: '#ef4444', tension: 0.1 }},
-                    {{ label: 'Y', data: [...defaultY], borderColor: '#22c55e', tension: 0.1 }},
-                    {{ label: 'Z', data: [...defaultZ], borderColor: '#3b82f6', tension: 0.1 }}
-                ];
-
-                const myChart = new Chart(ctx, {{
-                    type: 'line',
-                    data: {{ labels: Array.from({{length: CONTROL_COUNT}}, (_, i) => i), datasets: datasetPiezo }},
-                    options: {{
-                        scales: {{ y: {{ min: 0, max: 4095 }} }},
-                        plugins: {{ dragData: {{ round: 0 }} }}
-                    }}
-                }});
-
-                function changeSensor(type) {{
-                    currentType = type;
-                    fetch(`/api/set_sensor/${{type}}`, {{method:'POST'}});
-                    myChart.data.datasets = (type === 'piezo') ? datasetPiezo : datasetADXL;
-                    document.getElementById('chart-title').innerText = type.toUpperCase() + " 패턴 (32개 제어점)";
-                    document.getElementById('btn-piezo').style.background = (type === 'piezo') ? '#3b82f6' : '#94a3b8';
-                    document.getElementById('btn-adxl').style.background = (type === 'adxl') ? '#3b82f6' : '#94a3b8';
-                    myChart.update();
-                }}
-
-                async function startCustomLoop() {{
-                    const x_full = interpolate(myChart.data.datasets[0].data, TARGET_COUNT);
-                    const y_full = (currentType === 'adxl') ? interpolate(myChart.data.datasets[1].data, TARGET_COUNT) : [];
-                    const z_full = (currentType === 'adxl') ? interpolate(myChart.data.datasets[2].data, TARGET_COUNT) : [];
-                    
-                    await fetch('/api/start_custom', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{
-                            label: document.getElementById('custom_label').value,
-                            custom_x: x_full, custom_y: y_full, custom_z: z_full
-                        }})
-                    }});
-                }}
-            </script>
-        </body>
-    </html>
+async def get_control_panel(request: Request):
     """
-    return html_content
+    templates/index.html 파일을 읽어서 화면에 뿌려줍니다.
+    """
+    return templates.TemplateResponse(request=request, name="index.html")
