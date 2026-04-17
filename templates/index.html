@@ -141,7 +141,11 @@
             <h4 id="chart-title" style="margin: 0; color: #475569">
               Piezo 패턴 (32 제어점)
             </h4>
-            <select id="custom_label" style="padding: 6px; border-radius: 5px">
+            <select
+              id="custom_label"
+              onchange="setPresetData()"
+              style="padding: 6px; border-radius: 5px"
+            >
               <option value="normal">Normal</option>
               <option value="anomaly">Anomaly</option>
             </select>
@@ -157,19 +161,24 @@
       const CONTROL_COUNT = 32;
       const TARGET_COUNT = 128;
 
-      // 🌟 Z축 중력(1g)이 반영된 초기 데이터 세팅
+      // 감쇠(Decay) 없이 일정한 진폭(500)으로 영원히 반복되는 사인파입니다.
       const defaultPiezo = Array.from({ length: CONTROL_COUNT }, (_, i) =>
-        Math.round(2048 + 1000 * Math.sin(i * 0.4)),
+        Math.round(2048 + 500 * Math.sin(i * 0.5) + (Math.random() * 40 - 20)),
       );
-      const defaultX = Array.from({ length: CONTROL_COUNT }, () =>
-        Math.round(2048 + (Math.random() * 20 - 10)),
+
+      // ADXL: X, Y, Z 축도 마찬가지로 일정한 진동폭 유지
+      const defaultX = Array.from({ length: CONTROL_COUNT }, (_, i) =>
+        Math.round(2048 + 200 * Math.sin(i * 0.7) + (Math.random() * 30 - 15)),
       );
-      const defaultY = Array.from({ length: CONTROL_COUNT }, () =>
-        Math.round(2048 + (Math.random() * 20 - 10)),
+      const defaultY = Array.from({ length: CONTROL_COUNT }, (_, i) =>
+        Math.round(
+          2048 + 150 * Math.sin(i * 0.4 + 1.5) + (Math.random() * 30 - 15),
+        ),
       );
-      const defaultZ = Array.from({ length: CONTROL_COUNT }, () =>
-        Math.round(2800 + (Math.random() * 20 - 10)),
-      ); // Z축 오프셋
+      const defaultZ = Array.from({ length: CONTROL_COUNT }, (_, i) =>
+        // Z축은 중력가속도(1g) 오프셋 2800을 기준으로 일정하게 진동
+        Math.round(2800 + 250 * Math.sin(i * 0.9) + (Math.random() * 30 - 15)),
+      );
 
       const datasetPiezo = [
         {
@@ -266,6 +275,7 @@
             }
           }
         }
+        setPresetData();
       }
 
       // 🌟 셀렉트박스 변경 시 서버의 EmulatorState 동기화
@@ -314,6 +324,82 @@
           }
           return result;
         }
+      }
+
+      // 🌟 정상/비정상 프리셋 생성 함수
+      function setPresetData() {
+        const label = document.getElementById("custom_label").value;
+        const type = currentType; // piezo 또는 adxl
+
+        if (label === "normal") {
+          // ✅ 정상 데이터: 일정한 진폭 유지 + 약간의 노이즈
+          if (type === "piezo") {
+            const normalPiezo = Array.from({ length: CONTROL_COUNT }, (_, i) =>
+              Math.round(
+                2048 + 600 * Math.sin(i * 0.5) + (Math.random() * 40 - 20),
+              ),
+            );
+            myChart.data.datasets[0].data = normalPiezo;
+          } else {
+            myChart.data.datasets[0].data = Array.from(
+              { length: CONTROL_COUNT },
+              (_, i) =>
+                Math.round(
+                  2048 + 300 * Math.sin(i * 0.7) + (Math.random() * 20 - 10),
+                ),
+            );
+            myChart.data.datasets[1].data = Array.from(
+              { length: CONTROL_COUNT },
+              (_, i) =>
+                Math.round(
+                  2048 +
+                    250 * Math.sin(i * 0.4 + 1.5) +
+                    (Math.random() * 20 - 10),
+                ),
+            );
+            myChart.data.datasets[2].data = Array.from(
+              { length: CONTROL_COUNT },
+              (_, i) =>
+                Math.round(
+                  2800 + 400 * Math.sin(i * 0.9) + (Math.random() * 20 - 10),
+                ),
+            );
+          }
+        } else {
+          // ❌ 비정상 데이터: 쾅! 하고 울린 뒤 사라지는 감쇠 진동 (Damped)
+          const decay = 0.12;
+          if (type === "piezo") {
+            const anomalyPiezo = Array.from({ length: CONTROL_COUNT }, (_, i) =>
+              Math.round(
+                2048 + 1500 * Math.exp(-decay * i) * Math.sin(i * 0.8),
+              ),
+            );
+            myChart.data.datasets[0].data = anomalyPiezo;
+          } else {
+            myChart.data.datasets[0].data = Array.from(
+              { length: CONTROL_COUNT },
+              (_, i) =>
+                Math.round(
+                  2048 + 1200 * Math.exp(-decay * i) * Math.sin(i * 1.2),
+                ),
+            );
+            myChart.data.datasets[1].data = Array.from(
+              { length: CONTROL_COUNT },
+              (_, i) =>
+                Math.round(
+                  2048 + 1000 * Math.exp(-decay * i) * Math.sin(i * 0.8 + 1.5),
+                ),
+            );
+            myChart.data.datasets[2].data = Array.from(
+              { length: CONTROL_COUNT },
+              (_, i) =>
+                Math.round(
+                  2800 + 1200 * Math.exp(-decay * i) * Math.sin(i * 1.5),
+                ),
+            );
+          }
+        }
+        myChart.update();
       }
 
       async function startCustomLoop() {
