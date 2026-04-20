@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from database_rdb import get_db
 from sensors import Sensor
 import asyncio
-
+import os
 app = FastAPI()
 
 templates = Jinja2Templates(directory="templates")
@@ -31,8 +31,9 @@ class EmulatorState:
 state = EmulatorState()
 
 # --- MQTT 설정 ---
-MQTT_BROKER = "127.0.0.1" 
-MQTT_PORT = 1883
+# 환경변수에 MQTT_BROKER가 있으면 그걸 쓰고, 없으면 "127.0.0.1"을 씁니다.
+MQTT_BROKER = os.getenv("MQTT_BROKER", "127.0.0.1") 
+MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
 MQTT_TOPIC = "sensor/data"
 
 mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id="FastAPI_Emulator")

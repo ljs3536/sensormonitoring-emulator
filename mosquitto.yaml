@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto-config
+data:
+  mosquitto.conf: |
+    allow_anonymous true
+    listener 1883
+    listener 9001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+    spec:
+      nodeSelector:
+        node-role: data # 🌟 Data 노드 지정
+      containers:
+        - name: mosquitto
+          image: eclipse-mosquitto:latest # 공식 이미지 사용
+          ports:
+            - containerPort: 1883
+            - containerPort: 9001
+          volumeMounts:
+            - name: config-volume
+              mountPath: /mosquitto/config/mosquitto.conf
+              subPath: mosquitto.conf
+          resources:
+            limits:
+              memory: "256Mi" # 가벼우므로 메모리 제한
+              cpu: "200m"
+      volumes:
+        - name: config-volume
+          configMap:
+            name: mosquitto-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mqtt-svc # Secret에서 지정한 이름(mqtt-svc)과 맞춤
+spec:
+  selector:
+    app: mosquitto
+  ports:
+    - name: mqtt
+      port: 1883
+      targetPort: 1883
+    - name: ws
+      port: 9001
+      targetPort: 9001
