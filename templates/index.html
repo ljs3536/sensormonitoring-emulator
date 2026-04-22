@@ -162,14 +162,13 @@
     <script>
       const ctx = document.getElementById("dragChart").getContext("2d");
       let currentType = "piezo";
-      const CONTROL_COUNT = 32;
-      const TARGET_COUNT = 128;
 
-      // 🌟 1. DB에서 불러온 센서 목록과 현재 물리 파라미터를 저장할 전역 변수
+      // 🌟 1. 기본 생성 및 전송 데이터를 128개로 완전히 고정
+      const CONTROL_COUNT = 128;
+
       let sensorsData = [];
       let currentSensorParams = { k: 0.5, c: 0.01, temp: 25.0 };
 
-      // 초기 빈 차트 데이터 (실제 데이터는 setPresetData에서 덮어씌워짐)
       const datasetPiezo = [
         {
           label: "Piezo Signal",
@@ -190,31 +189,31 @@
         type: "line",
         data: {
           labels: Array.from({ length: CONTROL_COUNT }, (_, i) => i),
-          datasets: datasetPiezo, // 기본 Piezo
+          datasets: datasetPiezo,
         },
         options: {
           scales: { y: { min: 0, max: 4095 } },
           plugins: { dragData: { round: 0 } },
+          // 128개의 점이 화면에 가득 차므로, 점(Point) 크기를 줄여서 깔끔하게 보이게 합니다.
+          elements: { point: { radius: 1 } },
         },
       });
 
-      // 🌟 2. 센서 타입 변경 및 DB 데이터 Fetch
       async function changeSensor(type) {
         currentType = type;
 
-        // UI 업데이트
         document.getElementById("btn-piezo").style.background =
           type === "piezo" ? "#3b82f6" : "#94a3b8";
         document.getElementById("btn-adxl").style.background =
           type === "adxl" ? "#3b82f6" : "#94a3b8";
         document.getElementById("chart-title").innerText =
-          type.toUpperCase() + " 패턴 (32개 제어점)";
+          type.toUpperCase() + " 패턴 (128 데이터)";
 
         myChart.data.datasets = type === "piezo" ? datasetPiezo : datasetADXL;
 
         try {
           const res = await fetch(`/api/db_sensors/${type}`);
-          sensorsData = await res.json(); // 전역 변수에 저장
+          sensorsData = await res.json();
           const selectBox = document.getElementById("sensor_id_select");
 
           selectBox.innerHTML = "";
@@ -229,7 +228,6 @@
               selectBox.appendChild(opt);
             });
           }
-          // 목록 갱신 후 파라미터 적용
           updateTargetSensor();
         } catch (e) {
           console.error("센서 목록 로딩 실패:", e);
@@ -238,7 +236,6 @@
         }
       }
 
-      // 🌟 3. 선택된 센서의 물리 파라미터 로드
       async function updateTargetSensor() {
         const selectedId = document.getElementById("sensor_id_select").value;
         const type = currentType;
@@ -251,7 +248,7 @@
             temp: sensor.ambient_temp || 25.0,
           };
           console.log(`적용된 [${sensor.name}] 파라미터:`, currentSensorParams);
-          setPresetData(); // 파라미터가 바뀌면 즉시 그래프 갱신
+          setPresetData();
         }
 
         await fetch(`/api/set_sensor/${type}/${selectedId}`, {
@@ -263,80 +260,87 @@
         changeSensor("piezo");
       };
 
-      // 보간 함수 (유지)
-      function interpolate(points, targetLength) {
-        const result = [];
-        const factor = (points.length - 1) / (targetLength - 1);
-        for (let i = 0; i < targetLength; i++) {
-          const p = i * factor;
-          const left = Math.floor(p);
-          const right = Math.ceil(p);
-          const weight = p - left;
-          if (left === right) {
-            result.push(points[left]);
-          } else {
-            const val = points[left] * (1 - weight) + points[right] * weight;
-            result.push(Math.round(val));
-          }
-        }
-        return result;
-      }
-
-      // 🌟 4. 물리 파라미터를 적용한 동적 데이터 생성 핵심 로직
       function setPresetData() {
         const label = document.getElementById("custom_label").value;
         const type = currentType;
         const { k, c, temp } = currentSensorParams;
 
-        // 물리 법칙 계산
-        const baseFreq = 0.5 * Math.sqrt(k); // 강성(k) -> 주파수
-        const noiseScale = Math.max(2, temp * 0.5); // 온도(temp) -> 열 잡음
-        const decay = c * 5; // 감쇠(c) -> 시각적 소멸 속도 (32포인트 기준 증폭)
+        // ====================================================================
+        // 🌟 [핵심 물리 수학] PINN 백엔드(1.0*a + c*v + k*x = 0)와 동일한 조건
+        // ====================================================================
+        // 1. 감쇠비 (Damping Factor)
+        const damping = c / 2.0;
 
-        // 노이즈 생성기
-        const getNoise = () => Math.random() * noiseScale * 2 - noiseScale;
+        // 2. 고유 진동수 (Damped Natural Frequency)
+        // 루트 안이 음수가 되면 발산하므로 안전장치(Math.max) 추가
+        const omega_d = Math.sqrt(Math.max(0.0001, k - Math.pow(damping, 2)));
+
+        // 3. 노이즈 스케일 (방정식 검증을 위해 노이즈는 살짝 줄임)
+        const noiseScale = Math.max(1, temp * 0.2);
+        const getNoise = () => (Math.random() - 0.5) * noiseScale * 2;
 
         if (label === "normal") {
-          // ✅ 정상 상태 (연속 진동)
+          // ✅ 완벽한 수학적 정상 상태 (Exact Damped Harmonic Oscillator)
+          // 시간이 지날수록(i가 커질수록) e^(-damping * i)에 의해 진폭이 0으로 수렴합니다.
           if (type === "piezo") {
             myChart.data.datasets[0].data = Array.from(
               { length: CONTROL_COUNT },
-              (_, i) =>
-                Math.round(2048 + 600 * Math.sin(i * baseFreq) + getNoise()),
+              (_, i) => {
+                const val =
+                  2048 +
+                  800 * Math.exp(-damping * i) * Math.sin(omega_d * i) +
+                  getNoise();
+                return Math.round(val);
+              },
             );
           } else {
-            // ADXL은 각 축마다 주파수와 위상(Phase)을 다르게 주어 리얼리티를 살림
+            // ADXL: 3축 모두 "동일한 물리계수(k, c)"를 공유해야 모델이 헷갈리지 않습니다.
+            // 대신 위상차(+1.0, +2.0)와 초기 진폭(500, 400, 600)만 다르게 줍니다.
             myChart.data.datasets[0].data = Array.from(
               { length: CONTROL_COUNT },
               (_, i) =>
                 Math.round(
-                  2048 + 300 * Math.sin(i * baseFreq * 1.2) + getNoise(),
+                  2048 +
+                    500 * Math.exp(-damping * i) * Math.sin(omega_d * i) +
+                    getNoise(),
                 ),
             );
             myChart.data.datasets[1].data = Array.from(
               { length: CONTROL_COUNT },
               (_, i) =>
                 Math.round(
-                  2048 + 250 * Math.sin(i * baseFreq * 0.8 + 1.5) + getNoise(),
+                  2048 +
+                    400 * Math.exp(-damping * i) * Math.sin(omega_d * i + 1.0) +
+                    getNoise(),
                 ),
             );
             myChart.data.datasets[2].data = Array.from(
               { length: CONTROL_COUNT },
               (_, i) =>
                 Math.round(
-                  2800 + 400 * Math.sin(i * baseFreq * 1.5) + getNoise(),
-                ), // Z축은 2800 기준
+                  2800 +
+                    600 * Math.exp(-damping * i) * Math.sin(omega_d * i + 2.0) +
+                    getNoise(),
+                ),
             );
           }
         } else {
-          // ❌ 비정상 상태 (충격 후 감쇠 진동)
+          // ❌ 비정상 상태 (구조적 파괴 시뮬레이션)
+          // 정상 k, c를 완전히 무시하는 파동을 강제로 주입합니다.
+          // 예: 배관이 찢어져서 강성(k)이 미친듯이 높아지고 감쇠(c)가 사라진 상태
+          const broken_k = k * 4.0;
+          const broken_omega = Math.sqrt(broken_k);
+          const broken_damping = 0.0001; // 감쇠가 거의 안 됨
+
           if (type === "piezo") {
             myChart.data.datasets[0].data = Array.from(
               { length: CONTROL_COUNT },
               (_, i) =>
                 Math.round(
                   2048 +
-                    1500 * Math.exp(-decay * i) * Math.sin(i * baseFreq * 1.5) +
+                    1200 *
+                      Math.exp(-broken_damping * i) *
+                      Math.sin(broken_omega * i) +
                     getNoise(),
                 ),
             );
@@ -346,7 +350,9 @@
               (_, i) =>
                 Math.round(
                   2048 +
-                    1200 * Math.exp(-decay * i) * Math.sin(i * baseFreq * 1.8) +
+                    1000 *
+                      Math.exp(-broken_damping * i) *
+                      Math.sin(broken_omega * i) +
                     getNoise(),
                 ),
             );
@@ -356,8 +362,8 @@
                 Math.round(
                   2048 +
                     1000 *
-                      Math.exp(-decay * i) *
-                      Math.sin(i * baseFreq * 1.2 + 1.5) +
+                      Math.exp(-broken_damping * i) *
+                      Math.sin(broken_omega * i + 1.5) +
                     getNoise(),
                 ),
             );
@@ -366,7 +372,9 @@
               (_, i) =>
                 Math.round(
                   2800 +
-                    1200 * Math.exp(-decay * i) * Math.sin(i * baseFreq * 2.0) +
+                    1000 *
+                      Math.exp(-broken_damping * i) *
+                      Math.sin(broken_omega * i + 3.0) +
                     getNoise(),
                 ),
             );
@@ -374,34 +382,22 @@
         }
         myChart.update();
       }
-
-      // 🌟 타이머(Loop)를 제어할 전역 변수
       let emulatorInterval = null;
 
-      // 지속 전송 시작 함수
       async function startCustomLoop() {
-        // 이미 실행 중이라면 중복 실행 방지를 위해 먼저 정지
         stopEmulator();
 
-        // UI 버튼 상태 변경 (전송 중임을 시각적으로 표시)
         const startBtn = document.getElementById("btn-start");
         startBtn.innerText = "⏳ Sending Data... (Running)";
-        startBtn.style.background = "#f59e0b"; // 주황색으로 변경
+        startBtn.style.background = "#f59e0b";
 
-        // 1회 전송 로직을 함수로 묶음
         const sendData = async () => {
-          const x_full = interpolate(
-            myChart.data.datasets[0].data,
-            TARGET_COUNT,
-          );
+          // 🌟 3. 화면에 그려진 128개의 원본 배열을 변형 없이 그대로 가져옴
+          const x_full = myChart.data.datasets[0].data;
           const y_full =
-            currentType === "adxl"
-              ? interpolate(myChart.data.datasets[1].data, TARGET_COUNT)
-              : [];
+            currentType === "adxl" ? myChart.data.datasets[1].data : [];
           const z_full =
-            currentType === "adxl"
-              ? interpolate(myChart.data.datasets[2].data, TARGET_COUNT)
-              : [];
+            currentType === "adxl" ? myChart.data.datasets[2].data : [];
 
           try {
             await fetch("/api/start_custom", {
@@ -419,26 +415,19 @@
           }
         };
 
-        // 1. 버튼 누르자마자 즉시 1번 전송
         await sendData();
-
-        // 2. 1초(1000ms)마다 반복해서 전송하는 타이머 가동
         emulatorInterval = setInterval(sendData, 1000);
       }
 
-      // 🌟 전송 정지 함수 (Stop 버튼 클릭 시 실행)
       function stopEmulator() {
         if (emulatorInterval) {
-          clearInterval(emulatorInterval); // 타이머 폭파!
+          clearInterval(emulatorInterval);
           emulatorInterval = null;
         }
 
-        // UI 버튼 원상복구
         const startBtn = document.getElementById("btn-start");
         startBtn.innerText = "▶ Start Emulation";
         startBtn.style.background = "#6366f1";
-
-        console.log("🛑 에뮬레이터 전송 정지됨");
       }
     </script>
   </body>
