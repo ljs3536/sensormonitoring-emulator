@@ -104,3 +104,38 @@ async def start_custom(request: Request):
 async def get_control_panel(request: Request):
     """templates/index.html 파일을 읽어서 화면에 뿌려줍니다."""
     return templates.TemplateResponse(request=request, name="index.html")
+
+
+# 🌟 1. 새로운 FFT 전용 컨트롤 패널 화면 서빙
+@app.get("/fft", response_class=HTMLResponse)
+async def get_fft_control_panel(request: Request):
+    """templates/fft_index.html 파일을 읽어서 화면에 뿌려줍니다."""
+    return templates.TemplateResponse(request=request, name="fft_index.html")
+
+# 🌟 2. 화면에서 만든 FFT 데이터를 받아 MQTT로 직행하는 API
+@app.post("/api/start_fft_custom")
+async def start_fft_custom(request: Request):
+    """프론트엔드에서 파이프(|)로 조인되어 넘어온 데이터를 그대로 MQTT로 릴레이합니다."""
+    data = await request.json()
+    
+    fft_data_str = data.get("fft_data", "")
+    label = data.get("label", "normal")
+    
+    # 앞서 수정한 Collector가 받을 수 있는 포맷으로 조립
+    payload = {
+        "seq": state.seq, 
+        "sensor_id": "piezo_01",
+        "sensor": "normal", 
+        "label": label,
+        "timestamp": time.time(), 
+        "hex_data": fft_data_str, # Hex 데이터 대신 FFT 문자열 삽입!
+        "battery": 100
+    }
+    
+    # 3. MQTT 발송
+    print(f"📤 [FFT Direct] MQTT 발송! [ID: {state.sensor_id} | Label: {label}]")
+    mqtt_client.publish(MQTT_TOPIC, json.dumps(payload))
+    
+    state.seq = (state.seq + 1) % 256
+    return {"status": "sent_fft_to_mqtt"}
+
