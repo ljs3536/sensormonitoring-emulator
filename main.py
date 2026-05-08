@@ -120,11 +120,11 @@ async def start_fft_custom(request: Request):
     
     fft_data_str = data.get("fft_data", "")
     label = data.get("label", "normal")
-    
+    sensor_id = data.get("sensor_id", "echo_01")
     # 앞서 수정한 Collector가 받을 수 있는 포맷으로 조립
     payload = {
         "seq": state.seq, 
-        "sensor_id": "piezo_01",
+        "sensor_id": sensor_id,
         "sensor": "normal", 
         "label": label,
         "timestamp": time.time(), 
