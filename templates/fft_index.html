@@ -280,23 +280,27 @@
           console.error("FFT 전송 실패:", e);
         }
       }
-
+      let baselineData = null; // 최초 데이터를 저장할 변수
       function startEmulator() {
         if (emulatorInterval) return;
-        document.getElementById("btn-start").innerText =
-          "⏳ Sending Data... (Running)";
-        document.getElementById("btn-start").style.background = "#f59e0b";
+
+        // 시작할 때 최초의 깨끗한 데이터를 한 번만 복사해둡니다.
+        if (!baselineData) {
+          baselineData = [...fftChart.data.datasets[0].data];
+        }
+
+        document.getElementById("btn-start").innerText = "⏳ Sending Data...";
 
         sendData();
         emulatorInterval = setInterval(() => {
-          const current = fftChart.data.datasets[0].data;
-          const jittered = current.map((v) =>
-            Math.max(0, v + (Math.random() - 0.5) * 0.0005),
+          // 이전 데이터가 아니라 'baselineData'를 기준으로 지터를 줍니다.
+          const jittered = baselineData.map(
+            (v) => Math.max(0, v + (Math.random() - 0.5) * 0.0008), // 지터 폭을 살짝 조정해봐도 좋습니다.
           );
+
           fftChart.data.datasets[0].data = jittered;
           fftChart.update("none");
-
-          sendData(); // 1초마다 변경된 데이터와 센서 ID 전송
+          sendData();
         }, 1000);
       }
 
